@@ -1,40 +1,21 @@
 import os
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 import yt_dlp
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
-# Load token from environment variable
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# In-memory usage tracker (replace with database like Supabase later)
-user_usage = {}
-
-MAX_FREE_DOWNLOADS = 3
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🎵 Send /download <YouTube URL> to get your music.\nYou get 3 free downloads!")
+    await update.message.reply_text("🎵 Send me a YouTube link to download the audio!")
 
-async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.effective_user.id)
-
-    if user_id not in user_usage:
-        user_usage[user_id] = 0
-
-    if user_usage[user_id] >= MAX_FREE_DOWNLOADS:
-        await update.message.reply_text("⚠️ You've used all 3 free downloads.\nPay ₹XX to unlock unlimited usage.")
-        return
-
-    if len(context.args) == 0:
-        await update.message.reply_text("❌ Please provide a YouTube link.\nExample: /download https://youtube.com/...")
-        return
-
-    url = context.args[0]
-    await update.message.reply_text("⏬ Downloading your music, please wait...")
+async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    url = update.message.text
+    await update.message.reply_text("📥 Downloading...")
 
     try:
         ydl_opts = {
             'format': 'bestaudio/best',
-            'outtmpl': f'downloads/{user_id}.mp3',
+            'outtmpl': 'downloads/%(title)s.%(ext)s',
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
@@ -43,22 +24,20 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
+            info = ydl.extract_info(url, download=True)
+            filename = ydl.prepare_filename(info).replace(".webm", ".mp3").replace(".m4a", ".mp3")
 
-        with open(f'downloads/{user_id}.mp3', 'rb') as audio_file:
-            await update.message.reply_audio(audio=audio_file, title="Downloaded Track")
+        with open(filename, 'rb') as f:
+            await update.message.reply_audio(f)
 
-        os.remove(f'downloads/{user_id}.mp3')
-        user_usage[user_id] += 1
+        os.remove(filename)
 
     except Exception as e:
-        await update.message.reply_text(f"❌ Error: {str(e)}")
+        await update.message.reply_text("❌ Error: " + str(e))
+
+app = ApplicationBuilder().token(BOT_TOKEN).build()
+app.add_handler(CommandHandler("start", start))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link))
 
 if __name__ == '__main__':
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("download", download))
-
-    print("Bot is running...")
     app.run_polling()
